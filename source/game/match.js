@@ -4,9 +4,9 @@
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const approach = (v, target, amount) => v + clamp(target - v, -amount, amount);
   const rules = {
-    shore: { aiSpeed: 3.05, reaction: .35, window: .26, pace: 1.35 },
-    tide: { aiSpeed: 3.85, reaction: .23, window: .21, pace: 1.19 },
-    swell: { aiSpeed: 4.65, reaction: .15, window: .17, pace: 1.05 }
+    shore: { aiSpeed: 3.35, reaction: .28, window: .26, pace: 1.28, error: .135, attack: .21 },
+    tide: { aiSpeed: 3.95, reaction: .23, window: .25, pace: 1.24, error: .115, attack: .34 },
+    swell: { aiSpeed: 4.55, reaction: .18, window: .235, pace: 1.18, error: .091, attack: .47 }
   };
   class Match {
     constructor(level = "shore", random = Math.random, duel = false) {
@@ -25,7 +25,8 @@
       this.events = [];
     }
     emit(type, detail) { this.events.push({type, detail}); }
-    point(winner) {
+    point(winner, reason = "落地") {
+      this.reason = reason;
       this.buffer = null;
       this.score[winner]++;
       this.server = winner;
@@ -38,6 +39,18 @@
     launch(side, x, z, duration, lift, style) {
       this.buffer = null;
       this.flight = {side, start: {...this.ball}, x, z, duration, lift, t: 0, style};
+      const f = this.flight;
+      const travel = -f.start.z / (z - f.start.z);
+      const tNet = 1 - Math.pow(1 - clamp(travel,0,1), 1/1.27);
+      const arch = 4*tNet*(1-tNet);
+      if (arch > .02) {
+        const base = f.start.y*(1-tNet) + .07*tNet;
+        f.lift = style === "下网" ? (1.10-base)/arch : Math.max(lift,(1.63-base)/arch);
+      }
+      if (side===0 && !this.duel) {
+        f.chase = Math.hypot(x-this.aiX,z-this.aiZ);
+        f.errorRoll = this.random();
+      }
       this.phase = "flight"; this.ready = false;
       this.hit = 1;
       this.rally++; this.best = Math.max(this.best, this.rally);
@@ -49,14 +62,14 @@
       if (side !== 0 && !(this.duel && side === 1)) return false;
       if (this.phase === "point" || this.phase === "over") return false;
       const facing = side === 0 ? 1 : -1;
+      power = clamp(power, 0, 1); aim = clamp(aim, -1, 1);
       if (this.phase === "serve") {
         if (this.server !== side) return false;
         const origin = side === 0 ? this.playerX : this.aiX;
-        this.launch(side, -Math.sign(origin || facing)*1.35, -facing*4.4, 1.24, 2.25, "发球");
+        this.launch(side, -Math.sign(origin || facing)*(1.2+.4*Math.abs(aim)), -facing*(3.9+1.2*power), 1.43-.34*power, 2.4-.34*power, "发球");
         return true;
       }
       if (this.flight.side === side) return false;
-      power = clamp(power, 0, 1); aim = clamp(aim, -1, 1);
       if (this.ready) return this.returnShot(side, power, aim);
       const f = this.flight;
       if (f.contact) {
@@ -74,19 +87,41 @@
     returnShot(side, power, aim, contactTime = this.flight.t) {
       const facing = side === 0 ? 1 : -1;
       const accuracy = clamp(1 - Math.abs(contactTime - .80) / (this.rules.window + .01), 0, 1);
-      const smash = power >= .69 && this.ball.y >= 1.72 && accuracy > .32;
+      const smash = power >= .68 && this.ball.y >= 1.72 && accuracy > .32;
       const drop = power < .37;
-      const x = clamp(facing*aim * 2.53 + (this.random() - .5) * (.8 - .55 * accuracy), -2.55, 2.55);
+      const x = clamp(facing*aim*2.51 + (this.random()-.5)*(.54-.40*accuracy),-2.55,2.55);
+      const duration = drop ? 1.21-.46*power : smash ? 1.02-.47*power : 1.53-.54*power;
+      const depth = drop ? 1.32+2.50*power : 4.05+2.15*power;
+      const lift = drop ? 1.20+.37*power : smash ? .83-.31*power : 2.22-.39*power;
       this.hits++;
-      this.launch(side, x, facing*(drop ? -2.2 : -5.75), smash ? .67 : drop ? .98 : 1.24,
-        smash ? .62 : drop ? 1.38 : 2.05, smash ? "扣杀" : drop ? "吊球" : "高远球");
+      this.launch(side,x,-facing*depth,duration+.10*(1-accuracy),lift,
+        drop ? "吊球" : smash ? "扣杀" : power >= .68 ? "平抽" : "高远球");
+      this.flight.power=power;
       return true;
     }
     aiReturn() {
-      const sign = this.random() > .45 ? -Math.sign(this.playerX || 1) : Math.sign(this.playerX || 1);
-      const x = sign * (.45 + this.random() * 2.03);
-      this.launch(1, x, 4.1 + this.random() * 1.85, this.rules.pace + this.random() * .20,
-        1.65 + this.random() * .95, this.rally ? "回球" : "发球");
+      if (this.phase === "serve") {
+        this.launch(1,-Math.sign(this.aiX || 1)*1.35,4.5,1.24,2.05,"发球");
+        return;
+      }
+      const incoming=this.flight;
+      const scramble=clamp((incoming.chase-1.6)/3.4,0,1);
+      const pressure=scramble + (incoming.style==="扣杀" ? .55 : 0);
+      const fatigue=Math.min(.12,Math.max(0,this.rally-6)*.006);
+      // Each approach gets one error roll at launch, independent of frame rate.
+      if (incoming.errorRoll < this.rules.error*(1+.85*pressure)+fatigue) {
+        this.launch(1, this.ball.x*.35, 2.5, .82, -.55, "下网");
+        return;
+      }
+      const opening = Math.abs(incoming.x)<1.2 && incoming.style!=="扣杀";
+      const attack = this.random() < this.rules.attack*(opening ? 1.35 : .65) && scramble<.86;
+      const drop = !attack && Math.abs(this.playerZ)>4.6 && this.random()<.42;
+      const lane = Math.abs(this.playerX)>.32 ? -Math.sign(this.playerX) : (this.random()<.5 ? -1 : 1);
+      const x = lane*(.7+this.random()*(attack ? 1.83 : 1.55));
+      const shortKill = attack && opening && this.playerZ > 4.1 && this.ball.y > 1.6;
+      this.launch(1,x,shortKill ? 1.30 : drop ? 1.8+this.random() : 4.4+this.random()*1.8,
+        this.rules.pace*(shortKill ? .58 : attack ? .73 : drop ? .91 : 1.04)+.13*scramble,
+        attack ? .76 : drop ? 1.36 : 2+this.random()*.5,attack ? "扣杀" : drop ? "吊球" : "高远球");
     }
     step(dt) {
       this.clock += dt;
@@ -117,16 +152,23 @@
       f.t = Math.min(1, f.t + dt / f.duration);
       // Air drag takes speed off the shuttle as it nears the receiver.
       const travel = 1 - Math.pow(1 - f.t, 1.27);
+      const previousZ = this.ball.z;
       this.ball.x = f.start.x + (f.x - f.start.x) * travel;
       this.ball.z = f.start.z + (f.z - f.start.z) * travel;
       this.ball.y = f.start.y * (1 - f.t) + .07 * f.t + 4 * f.lift * f.t * (1 - f.t);
+      if (previousZ*this.ball.z<=0 && this.ball.y<1.55) {
+        this.point(1-f.side,"下网"); return;
+      }
       if (this.duel || f.side === 1) {
         const near = f.side === 1, facing = near ? 1 : -1;
         const rx = near ? "playerX" : "aiX", rz = near ? "playerZ" : "aiZ", other = near ? "aiX" : "playerX";
-        this[rx] = approach(this[rx], f.x-facing*.36, dt*6.8);
-        this[rz] = approach(this[rz], f.z+facing*.34, dt*5.5);
+        // A fast attacking shot leaves less time to change direction after the split step.
+        if (this.duel || f.style!=="扣杀" || f.t*f.duration >= .18) {
+          this[rx] = approach(this[rx], f.x-facing*.36, dt*6.8);
+          this[rz] = approach(this[rz], f.z+facing*.34, dt*5.5);
+        }
         this[other] = approach(this[other], this[other]*.96, dt*1.65);
-        this.ready = f.t >= .80-this.rules.window && f.t <= .80+this.rules.window &&
+        this.ready = f.style!=="下网" && f.t >= .80-this.rules.window && f.t <= .80+this.rules.window &&
           Math.hypot(this.ball.x-this[rx], this.ball.z-this[rz]) < 2.15 && this.ball.y > .3;
         if (this.ready) f.contact = {clock:this.clock, t:f.t, ball:{...this.ball}};
         if (this.buffer && this.buffer.until < this.clock) {

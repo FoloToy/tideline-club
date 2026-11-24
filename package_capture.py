@@ -12,7 +12,7 @@ def json_bytes(data):
 def main(archive, out):
     m = json.loads((archive / "manifest.json").read_text())
     version = m["app_descriptor"]["version"]
-    assert version in {"1.1.0-capture.1", "1.1.1-motion.1", "1.2.0-duel.1"} and m["target"] == "esp32c3" and m["flash_size_bytes"] == 8*1024*1024
+    assert version in {"1.1.0-capture.1", "1.1.1-motion.1", "1.2.0-duel.1", "1.3.0-court.1"} and m["target"] == "esp32c3" and m["flash_size_bytes"] == 8*1024*1024
     name = f"Tideline-QMI8658A-{version}"
     full = (archive / "FoloToy-AI-Passport-full.bin").read_bytes()
     assert sha(full) == m["full_bin_sha256"] == archive.name

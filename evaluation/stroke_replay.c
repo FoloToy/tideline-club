@@ -11,7 +11,8 @@ int main(void) {
         stroke_t shot;
         int load=lround(sqrt((double)ax*ax+(double)ay*ay+(double)az*az)*1000/8192);
         if (stroke_sample(&d,ms,gy/64,gx/64,-(gz/64),load,lround(az*1000.0/8192),&shot)) {
-            printf("%u %c %c\n",ms,'A'+stroke_usage(0,shot)-4,'A'+stroke_usage(1,shot)-4);
+            printf("%u %c %c %ld %ld\n",ms,'A'+stroke_usage(0,shot)-4,'A'+stroke_usage(1,shot)-4,
+                   lroundf(d.speed),127+lroundf(127*shot.aim));
         }
     }
     return ferror(stdin);

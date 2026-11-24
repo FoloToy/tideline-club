@@ -10,8 +10,22 @@
   let level = "shore", match, arena, active = false, paused = false, sound = true;
   let raf = 0, previous = 0, accumulator = 0, toast = "", toastUntil = 0;
   let audio, duel = false;
-  const players = [0,1].map(() => ({seen:false, swings:0, buttons:0}));
-  const shotKeys = ["QWERTYFGH","UIOJKLBNM"];
+  const relay=window.TidelineRelay;
+  const host=relay?.role==="host", remote=relay?.role==="court";
+  const stats=[0,1].map(()=>({swings:0,buttons:0,speed:0}));
+  class RemotePad {
+    constructor(slot) { this.slot=slot; this.reset(); }
+    reset() { this.phase="idle"; this.message="等待 Mac 配对"; this.ready=false; this.name=""; this.screenKey=""; }
+    display(lines) {
+      const key=JSON.stringify(lines);
+      if(this.phase==="paired" && this.screenKey!==key) {
+        this.screenKey=key;relay.send({type:"screen",side:this.slot,lines});
+      }
+    }
+  }
+  const pads=[0,1].map(i=>remote ? new RemotePad(i) : new PassportPad(i,onPadState,onPadStroke,
+    id=>pads.some((pad,side)=>side!==i && pad.device?.id===id)));
+  const canPlay=()=>pads[0].ready && (!duel || pads[1].ready);
   function playerName(side) { return duel ? (side ? "P2" : "P1") : (side ? "电脑" : "你"); }
   const labels = {shore:"入门",tide:"进阶",swell:"挑战"};
   function ring(kind) {
@@ -39,48 +53,104 @@
   function stroke(power, aim, side=0) {
     if (active && !paused) match.swing(power,aim,side);
   }
-  function refreshInputs() {
-    const seen = [];
-    players.forEach((p,side) => {
-      const name = "P"+(side+1);
-      if (p.seen) seen.push(name);
-      if ($("paddle-"+side)) updateText("paddle-"+side,name+" · "+(p.seen ?
-        "已收到输入　挥拍 "+p.swings+" 次　按键 "+p.buttons+" 次" : "等待输入"));
-    });
-    updateText("input-status",seen.length ? seen.join(" / ")+" 已收到输入" : "短按手柄确认键");
-    document.body.classList.toggle("connected",seen.length > 0);
-  }
-  function handlePaddle(e) {
-    const fallback = !e.code || e.code==="Unidentified";
-    const letter = fallback ? /^[a-z]$/i.exec(e.key)?.[0].toUpperCase() : /^Key([A-Z])$/.exec(e.code)?.[1];
-    const digit = fallback ? /^[1-8]$/.exec(e.key)?.[0] : /^Digit([1-8])$/.exec(e.code)?.[1];
-    // The first report can arrive in the lobby, before the tester or a match opens.
-    if (sheet.open && !content.querySelector("#paddle-0")) return false;
-    for (let side=0; side<2; side++) {
-      const key = letter ? shotKeys[side].indexOf(letter) : -1;
-      const button = Number(digit)-1-side*3;
-      const isButton = digit && button>=0 && button<3;
-      const hello = Number(digit)===7+side;
-      if (key<0 && !isButton && !hello) continue;
-      e.preventDefault();
-      if (e.repeat) return true;
-      const p=players[side]; p.seen=true;
-      if (key>=0) {
-        p.swings++;
-        stroke([.28,.56,.92][Math.floor(key/3)],key%3-1,side);
-      } else if (isButton) {
-        p.buttons++;
-        stroke(button===2?.72:.56,[-.95,.95,0][button],side);
-      }
-      refreshInputs(); return true;
+  function screenFor(side) {
+    const who="P"+(side+1);
+    if (!active || !match) {
+      return [who+" 已配对","潮汐羽球",pads[side].ready ? "在球场点开始" : "平放手柄"];
     }
-    return false;
+    const score=match.score[side]+" : "+match.score[1-side];
+    if (!duel && side===1)return [who+" 已配对","潮汐羽球","等待比赛"];
+    if (match.phase==="over")return [who+" "+(match.score[side]===7?"你赢了":"你输了"),score,"比赛结束"];
+    if (paused)return [who+" 暂停",score,"等待继续"];
+    if (match.phase==="point")return [who+" "+(match.server===side?"你得分":"对手得分"),score,["轻挥吊前场","快挥打后场","高点能扣杀"][(match.score[0]+match.score[1])%3]];
+    if (match.phase==="serve")return [who+" 潮汐羽球",score,match.server===side?"轻挥发球":"等待对手发球"];
+    return [who+" 潮汐羽球",score,match.flight.side===side?"对手接球":match.ready?"现在挥拍":"准备接球"];
   }
-  function showInfo(id) { modal($(id).innerHTML); refreshInputs(); }
+  function syncScreens() {
+    if (host)return;
+    pads.forEach((pad,side)=>{if(pad.phase==="paired")pad.display(screenFor(side));});
+  }
+  function postState(pad) {
+    relay.send({type:"state",side:pad.slot,phase:pad.phase,name:pad.name,message:pad.message,ready:pad.ready});
+  }
+  function refreshInputs() {
+    const needed=duel?2:1;
+    $("slot1").hidden=!duel && !host;
+    for(const [side,pad] of pads.entries()) {
+      const badge=$("slot"+side),button=$("link"+side), data=stats[side];
+      badge.classList.toggle("ready",pad.ready);
+      updateText("paddle-"+side,pad.message);
+      updateText("detail"+side,pad.name ? pad.name+" · 挥拍 "+data.swings+" 次"+(data.speed?" · "+data.speed+" °/s":"")+(data.buttons?" · 按键 "+data.buttons+" 次":"") : side?"第二只手柄":"第一只手柄");
+      button.disabled=remote;
+      button.textContent=remote?"在 Mac 配对":pad.phase==="paired"?"断开":pad.phase==="connecting"?"取消":"配对 P"+(side+1);
+    }
+    $("play").disabled=!canPlay() || host;
+    const count=pads.slice(0,needed).filter(p=>p.ready).length;
+    updateText("input-status",canPlay()? (duel?"两只手柄已就绪":"P1 手柄已就绪") : "已就绪 "+count+" / "+needed);
+    $("setup-jump").hidden=canPlay();
+    if($("resume"))$("resume").disabled=!canPlay();
+    if($("relink")) {
+      const missing=pads.slice(0,needed).find(p=>!p.ready);
+      $("relink").hidden=!missing || remote;
+      if(missing) $("relink").textContent=missing.phase==="connecting"?"正在配对…":"连接 P"+(missing.slot+1);
+    }
+  }
+  function onPadState(pad) {
+    if(pad.phase!=="paired")stats[pad.slot]={swings:0,buttons:0,speed:0};
+    if(host) {
+      postState(pad);
+      if(pad.phase!=="paired")pad.bridgeActive=false;
+      if(pad.phase==="paired" && !pad.bridgeActive){pad.bridgeActive=true;pad.display(["P"+(pad.slot+1)+" 已配对","iPad 球场","等待网页"]);}
+    }
+    if(active && !canPlay() && !paused && match.phase!=="over")pause("手柄未就绪");
+    refreshInputs();syncScreens();
+  }
+  function onPadStroke(side,power,aim,speed,button) {
+    const data=stats[side];
+    if(button)data.buttons++;else {data.swings++;data.speed=speed;}
+    if(host)relay.send({type:"stroke",side,power,aim,speed,button});
+    else if(pads[side].ready)stroke(power,aim,side);
+    refreshInputs();
+  }
+  function selectPad(side) {
+    const pad=pads[side];
+    if(remote)return;
+    if(pad.phase==="paired" || pad.phase==="connecting")pad.close();
+    else pad.pair();
+  }
+  [0,1].forEach(i=>$("link"+i).onclick=()=>selectPad(i));
+  $("setup-jump").onclick=()=>{ $("pairing").scrollIntoView({block:"center"}); if(!remote)$("link"+(pads[0].ready?1:0)).focus({preventScroll:true}); };
+  function showInfo(id) { modal($(id).innerHTML); }
+  if(host) {
+    document.body.classList.add("bridge-host");
+    updateText("pair-heading","为 iPad 配对手柄");
+    $("platform-help").hidden=false;
+    updateText("platform-help","在此配对 P1，双人时再配对 P2。保持此页开启，在 iPad 上打开启动窗口里的球场地址。");
+  } else if(remote || !navigator.bluetooth || !window.isSecureContext) {
+    $("platform-help").hidden=false;
+    updateText("platform-help",remote?"在 Mac 蓝牙配对页连接手柄，此处会自动显示就绪状态。":"电脑请用 Chrome / Edge 打开离线文件。iPad Safari 请在同网 Mac 双击「iPad球场.command」。");
+  }
+  if(relay)relay.listen(e=>{
+    if(host) {
+      if(e.type==="open" || e.type==="resync")pads.forEach(postState);
+      if(e.type==="screen")pads[e.side]?.display(e.lines);
+      if(e.type==="offline")pads.forEach((p,i)=>p.display(["P"+(i+1)+" 已配对","iPad 球场","等待网页"]));
+    } else {
+      if(e.type==="offline" || e.type==="open") {pads.forEach(p=>p.reset());pads.forEach(onPadState);}
+      const p=pads[e.side];
+      if(e.type==="state" && p) {
+        p.phase=e.phase;p.message=e.message;p.name=e.name;p.ready=e.ready;
+        if(p.phase!=="paired")p.screenKey="";
+        onPadState(p);
+      }
+      if(e.type==="stroke" && p?.ready)onPadStroke(e.side,e.power,e.aim,e.speed,e.button);
+    }
+  });
+  refreshInputs();
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
     duel = b.dataset.mode==="duel";
     document.querySelectorAll("[data-mode]").forEach(o => o.setAttribute("aria-pressed",String(o===b)));
-    $("difficulty").hidden = duel;
+    $("difficulty").hidden = duel; refreshInputs(); syncScreens();
     updateText("mode-name",duel?"双人对战":"人机对战");
   });
   document.querySelectorAll("[data-dialog]").forEach(b => b.onclick = () => showInfo(b.dataset.dialog));
@@ -100,9 +170,11 @@
   });
   function lobby() {
     cancelAnimationFrame(raf); raf=0; active = false; paused = false; keys.clear();
-    if (sheet.open) closeSheet(); $("court").hidden = true; $("lobby").hidden = false; $("play").focus();
+    if (sheet.open) closeSheet(); syncScreens(); $("court").hidden = true; $("lobby").hidden = false; $("play").focus();
   }
   function start() {
+    if(!canPlay() || host){lobby(); refreshInputs(); return;}
+    $("court").classList.toggle("duel",duel); $("split-hud").hidden=!duel;
     if (sheet.open) closeSheet();
     enableAudio(); keys.clear();
     match = new TidelineMatch(duel ? "shore" : level, Math.random, duel);
@@ -123,14 +195,20 @@
     if (!active || paused || match.phase === "over") return;
     paused = true; match.buffer = null; keys.clear(); cancelAnimationFrame(raf);
     modal('<h2>'+title+'</h2><p>比分与来球位置已保留。</p><div class="dialog-actions"><button id="resume">继续比赛</button><button id="restart">重新开局</button><button id="back">返回专区</button></div>');
+    const relink=document.createElement("button"); relink.id="relink";
+    $("resume").after(relink);
+    relink.onclick=()=>{const p=pads.slice(0,duel?2:1).find(p=>!p.ready);if(p && p.phase!=="connecting")p.pair();};
+    refreshInputs();syncScreens();
     $("resume").onclick=resume; $("restart").onclick=start; $("back").onclick=lobby;
   }
   function resume() {
     if (!active) return;
+    if(!canPlay()){if(!sheet.open){paused=false;pause("手柄未就绪");}return;}
     closeSheet(); paused=false; previous=performance.now(); accumulator=0; enableAudio();
     cancelAnimationFrame(raf); raf=requestAnimationFrame(frame);
   }
   function finish() {
+    syncScreens();
     const won = match.score[0] === 7;
     modal('<h2>'+(playerName(won?0:1)+"赢下了本场")+'</h2><div class="result-score">'+match.score[0]+' <span>∶</span> '+match.score[1]+'</div><p>'+(duel?'双人对战':labels[level]+'对手')+' · 最长回合 '+match.best+' 拍 · 成功接球 '+match.hits+' 次</p><div class="dialog-actions"><button id="again">再来一局</button><button id="exit">返回专区</button></div>');
     $("again").onclick=start; $("exit").onclick=lobby;
@@ -143,11 +221,19 @@
       cue=playerName(match.server)+"发球";
       tip=duel ? (match.server?"远场":"近场")+"轻挥手柄发球" : match.server ? "留意对面的发球方向" : "挥动手柄、按空格或点「挥拍」";
     } else if (match.phase==="point" || match.phase==="over") {
-      cue=playerName(match.server)+"得分"; tip="得分方发下一球";
+      cue=playerName(match.server)+"得分"; tip=match.reason+" · 得分方发下一球";
     } else if (match.ready) { cue=(duel ? playerName(1-match.flight.side)+" · " : "")+"现在挥拍"; tip="瞄准对方空当"; }
     else if (duel) { cue=playerName(1-match.flight.side)+" 准备接球"; tip=match.flight.side ? "来球飞向近场" : "来球飞向远场"; }
     else if (match.flight?.side===0) { cue="对手接球中"; tip="准备下一拍"; }
+    if(match.phase==="flight" && match.flight?.style==="下网")tip="对手回球过低";
+    if(!duel && stats[0].speed && match.phase==="flight")tip+=" · 上拍 "+stats[0].speed+" °/s";
     updateText("cue",cue); updateText("tip",tip);
+    if(duel)for(const side of [0,1]){
+      const scoring=match.phase==="point" || match.phase==="over";
+      updateText("side"+side+"-cue",scoring ? (match.server===side?"你得分":"对手得分") : screenFor(side)[2]);
+      updateText("side"+side+"-power",stats[side].speed ? "上拍 "+stats[side].speed+" °/s" : "");
+    }
+    syncScreens();
     updateText("signal-label",match.clock<toastUntil ? toast : match.ready && match.phase==="flight" ? "现在挥拍" : "");
   }
   function frame(now) {
@@ -173,7 +259,7 @@
     if (e.ctrlKey || e.metaKey || e.altKey || document.hidden ||
         e.target?.isContentEditable || e.target?.closest?.("input, textarea, select")) return;
     if (e.isComposing && (!e.code || e.code==="Unidentified")) return;
-    if (handlePaddle(e)) return;
+
     if (!active || sheet.open) return;
     keys.add(e.code);
     if (e.code==="Escape" || e.code==="KeyP") { e.preventDefault(); pause(); return; }

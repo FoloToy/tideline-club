@@ -84,6 +84,9 @@ run_static_checks() {
         -o "${test_dir}/test_demo_navigation"
     "${test_dir}/test_demo_navigation"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_pad_protocol.c -o "${test_dir}/test_pad_protocol"
+    "${test_dir}/test_pad_protocol"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_key_guard.c -o "${test_dir}/test_key_guard"
     "${test_dir}/test_key_guard"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Icomponents/bsp/src \

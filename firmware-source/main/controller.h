@@ -18,3 +18,6 @@ esp_err_t controller_radio_init(char ssid[24], char password[12]);
 void controller_publish(const controller_frame_t *frame);
 
 void controller_ui_capture(const char *heading, const char *detail, const char *action);
+
+void controller_ui_home(void);
+void controller_ui_remote(const char *title,const char *value,const char *hint);

@@ -267,9 +267,9 @@
     parasol(8.25,-2.7,2.82,2.0,[0x599990,0xffdfa9]);
     parasol(-8.6,1.5,2.85,1.65,[0xf5ce8b,0xe38c61]);
     parasol(7.95,-7.4,2.18,1.55,[0xe78869,0xf4d6ab]);
-    function palm(x,z,h,lean){
+    function palm(x,z,h,lean,batch=scenery){
       const base=[x,-.10,z],joint=[x+lean*.27,h*.44,z],tip=[x+lean,h,z+.13];
-      scenery.rod(0x9e805e,base,joint,.16); scenery.rod(0x97795c,joint,tip,.13);
+      batch.rod(0x9e805e,base,joint,.16); batch.rod(0x97795c,joint,tip,.13);
       for(let j=0;j<9;j++) {
         const a=j*Math.PI*2/9+range(-.22,.22), length=h*range(.47,.70), yaw=range(-.25,.25);
         const dx=Math.cos(a),dz=Math.sin(a);
@@ -280,9 +280,9 @@
           const spread=Math.sin((f+.07)*Math.PI)*length*.132;
           for(const side of [-1,1]){
             const edge=[next[0]-dz*side*spread+dx*.12,next[1]-spread*.43,next[2]+dx*side*spread+dz*.12];
-            scenery.tri(tint,p,next,edge);
+            batch.tri(tint,p,next,edge);
             const root=[p[0]-dz*side*spread*.40,p[1]-spread*.10,p[2]+dx*side*spread*.40];
-            scenery.tri(tint,p,edge,root);
+            batch.tri(tint,p,edge,root);
           }
         }
       }
@@ -323,6 +323,32 @@
       scenery.tri(0xeb795a,[x,3.43,z],[x+u,3.34,z+.05],[x,2.92,z]);
       scenery.tri(0xffdfad,[x+u*.31,3.40,z+.022],[x+u*.44,3.39,z+.029],[x+u*.22,3.04,z+.015]);
     }
+
+    // The opposite baseline opens onto the sheltered side of the bay.
+    island(18,40,37,5.4,[0xa5b8a3,0x8aa38f,0x729482]);
+    island(-25,35,31,4.6,[0xb9bba6,0x95a995,0x829d90]);
+    boat(-5.4,22,.93,0xe48d70);
+    boat(4.8,31,.71,0x7aa49b);
+    for(const s of [-1,1]){
+      scenery.cube(0xa07d61,s*6.48,.40,9.34,7.5,.10,.12);
+      scenery.cube(0x7b8066,s*6.48,.18,9.34,7.5,.04,.09);
+      for(let j=0;j<5;j++) scenery.cube(0x967456,s*(2.85+j*1.77),.22,9.34,.10,.54,.11);
+    }
+    const marina=new Batch();
+    palm(-6.15,9.10,4.6, .66,marina);
+    palm(6.4,8.9,4.9,-.75,marina);
+    // A little timber sailing pavilion gives the reverse view its own landmark.
+    marina.cube(0xb69471,3.7,-.30,11.5,4.8,.50,3.5);
+    marina.cube(0xf2cfa3,3.7,.66,12.05,3.66,1.42,1.46);
+    for(let j=0;j<4;j++)marina.cube(0x538d84,2.50+j*.80,.80,11.30,.54,.62,.055);
+    for(const x of [1.75,5.65])marina.cube(0xe8bd8c,x,.70,10.25,.11,1.50,.12);
+    marina.cube(0xd2785b,3.7,1.55,11.54,4.21,.13,2.96,-.15);
+    for(let i=0;i<9;i++)marina.cube(i%2?0xf7dab1:0xde9272,1.87+i*.457,1.29,10.10,.457,.16,.10);
+    for(const c of [[-19,6,43],[5,5.9,49],[21,8,50]]){
+      for(let i=0;i<4;i++)marina.orb(0xffdfbc,c[0]+i*1.92,c[1]+i*.057,c[2],2.22,.21,1.07);
+    }
+    const reverseVista=marina.mesh(scene);
+    reverseVista.layers.set(4);
 
     // Net cords use one line draw, with tape and posts in the court mesh.
     const cords=[];
@@ -479,6 +505,103 @@
       return {actor,pelvis,spine,neck,legs,arms,shadow:shadowBlob,near,lastX:null,step:0,motion:0};
     }
     const player=athlete(true), opponent=athlete(false);
+    const clamp = T.MathUtils.clamp;
+    const viewMaterial=track(solids.clone());
+    // Keep the near-camera model in front of the floor at steep look angles.
+    // Remapping clip depth retains depth testing between the fingers, shaft and strings.
+    viewMaterial.onBeforeCompile=program=>{
+      program.vertexShader=program.vertexShader.replace('#include <project_vertex>',
+        '#include <project_vertex>\ngl_Position.z=mix(-gl_Position.w,gl_Position.z,.08);');
+    };
+    const forearm=track(new T.CylinderGeometry(.082,.051,1,12));
+    function courtView(athlete, bodyLayer, otherBodyLayer, viewLayer) {
+      athlete.actor.traverse(part=>part.layers.set(bodyLayer));
+      athlete.shadow.layers.set(bodyLayer);
+      camera.layers.enable(bodyLayer);
+      const eye=new T.PerspectiveCamera(74,1,.045,180);
+      eye.layers.enable(otherBodyLayer);
+      eye.layers.enable(viewLayer);
+      eye.rotation.order='YXZ';
+      scene.add(eye);
+      const grip=group(eye);
+      const near=athlete.near, frame=near?0xffbe62:0x83e0d2;
+      racket(grip,frame).material=viewMaterial;
+      const hand=new Batch(), skin=near?0xc68c67:0xe0ae82;
+      hand.orb(skin,.018,.005,.013,.048,.063,.048);
+      hand.orb(skin,-.021,.035,.031,.020,.033,.025);
+      hand.mesh(grip,viewMaterial);
+      grip.traverse(part=>part.layers.set(viewLayer));
+      const armBatch=new Batch();
+      armBatch.add(forearm,skin,0,.5,0);
+      armBatch.add(round,frame,0,.09,0,.060,.075,.060);
+      const arm=armBatch.mesh(eye,viewMaterial);
+      arm.layers.set(viewLayer);
+      return {athlete,eye,grip,arm,sign:near?1:-1,yaw:0,pitch:0,initialized:false,rect:new T.Vector4()};
+    }
+    const views=[courtView(player,1,2,3),courtView(opponent,2,1,4)];
+    // Each perspective has its own camera and grip. Both read the same two
+    // athletes, shuttle and clock, including on the frame in which a rally ends.
+    scene.matrixWorldAutoUpdate=false;
+
+    function sizeCourtViews() {
+      const ratio=renderer.getPixelRatio(), split=Math.floor(canvas.width/2);
+      for(const [i,v] of views.entries()){
+        const width=i===0?split:canvas.width-split;
+        const aspect=Math.max(1,width)/canvas.height;
+        // The wider vertical lens keeps useful horizontal coverage on a phone.
+        // The two views stay side by side on both portrait and landscape displays.
+        v.eye.aspect=aspect;
+        v.eye.fov=clamp(T.MathUtils.radToDeg(2*Math.atan(Math.tan(.51)/aspect)),70,98);
+        v.eye.updateProjectionMatrix();
+        // r160 rounds each CSS rectangle down after multiplying by pixelRatio.
+        const css=px=>(px+.001)/ratio;
+        v.rect.set(i===0?0:css(split),0,css(width),css(canvas.height));
+      }
+    }
+    function followShuttle(v,state,dt){
+      const {eye,athlete,sign}=v;
+      const body=athlete.actor.position;
+      eye.position.set(body.x,1.56+body.y*.23,body.z+sign*.41);
+      const restYaw=Math.atan2(-sign*body.x,9), restPitch=-.066;
+      const halfY=T.MathUtils.degToRad(eye.fov)*.5;
+      const halfX=Math.atan(Math.tan(halfY)*eye.aspect);
+      const p=state.ball;
+      let targetYaw=restYaw, targetPitch=restPitch;
+      const tracking=Boolean(p)&&(state.phase==='serve'||state.phase==='flight');
+      if(tracking){
+        const dx=sign*(p.x-eye.position.x), forward=sign*(eye.position.z-p.z);
+        targetYaw=clamp(Math.atan2(dx,Math.max(.015,forward)),-1.36,1.36);
+        targetPitch=Math.atan2(p.y-eye.position.y,Math.hypot(dx,forward));
+      }
+      // Ease through the central field of vision. Near the edge, keep the
+      // arriving shuttle inside the lens, even directly above the player's head.
+      const turn=1-Math.exp(-dt*9.5);
+      function gaze(current,rest,target,halfFov){
+        const bias=target-rest;
+        const desired=target-clamp(bias*.55,-.33*halfFov,.33*halfFov);
+        const eased=v.initialized?T.MathUtils.lerp(current,desired,turn):desired;
+        return tracking?clamp(eased,target-halfFov*.62,target+halfFov*.62):eased;
+      }
+      v.yaw=gaze(v.yaw,restYaw,targetYaw,halfX);
+      v.pitch=gaze(v.pitch,restPitch,targetPitch,halfY);
+      eye.rotation.set(v.pitch,(sign<0?Math.PI:0)-v.yaw,0,'YXZ');
+      v.initialized=true;
+      const swing=clamp((sign>0?state.playerSwing:state.aiSwing)||0,0,1);
+      const cross=Math.sin(swing*Math.PI), reach=Math.sin(swing*2.07);
+      const depth=.93, height=depth*Math.tan(halfY), width=depth*Math.tan(halfX);
+      const gripScale=Math.min(.94,1.04*height,1.25*width);
+      v.grip.position.set(width*(.57-.62*cross),height*(-.77+.46*reach),-depth);
+      v.grip.rotation.set(-.43-.47*reach,-.31-.31*cross,.19+.92*cross-.34*swing);
+      v.grip.scale.setScalar(gripScale);
+      // The forearm extends to the shoulder below the screen throughout the
+      // follow-through. Rotating a disembodied wrist with the head looks detached.
+      const wrist=v.arm.position.set(.028,-.024,.020).multiplyScalar(gripScale)
+        .applyQuaternion(v.grip.quaternion).add(v.grip.position);
+      const bone=direction.set(width*.78,-height*.93,-depth*.30).sub(wrist);
+      const length=bone.length();
+      v.arm.scale.set(gripScale,length,gripScale);
+      v.arm.quaternion.setFromUnitVectors(axisY,bone.normalize());
+    }
     function animatePerson(a,x,z,swing,clock,dt,ready) {
       const near=a.near;
       const speed=a.lastX===null?0:Math.max(-5,Math.min(5,(x-a.lastX)/Math.max(dt,.001)));
@@ -566,6 +689,7 @@
       camera.aspect=aspect;camera.fov=48+narrow*8;
       camera.position.set(.46*(1-.7*narrow),5.53+narrow*1.55,13.23+narrow*5.90+Math.max(0,.62-aspect)*8.8);
       camera.lookAt(0,1.18+narrow*.16,-.86);camera.updateProjectionMatrix();
+      sizeCourtViews();
     }
     function updateShuttle(state,dt,clock) {
       const active=Boolean(state.ball)&&state.phase!=='over'&&state.phase!=='point';
@@ -592,18 +716,34 @@
         while(path.length>trailLength||path.length>1&&clock-path[path.length-1].at>.155)path.pop();
       }
       ribbon.visible=flight&&path.length>=2;
+      prevBall.copy(shuttle.position);prevValid=true;
+    }
+    function drawView(eye,firstPerson) {
       if(ribbon.visible){
         for(let i=0;i<path.length;i++){
-          const a=i===0?p:path[i],b=path[i+1]||path[i-1];
+          const a=i===0?shuttle.position:path[i],b=path[i+1]||path[i-1];
           direction.set(a.x-b.x,a.y-b.y,a.z-b.z);if(i===path.length-1)direction.negate();
-          fromCamera.set(camera.position.x-a.x,camera.position.y-a.y,camera.position.z-a.z);
+          fromCamera.set(eye.position.x-a.x,eye.position.y-a.y,eye.position.z-a.z);
           sideVector.crossVectors(direction,fromCamera).normalize().multiplyScalar(.058*(1-i/(path.length-1)));
           trailAttr.setXYZ(i*2,a.x+sideVector.x,a.y+sideVector.y,a.z+sideVector.z);
           trailAttr.setXYZ(i*2+1,a.x-sideVector.x,a.y-sideVector.y,a.z-sideVector.z);
         }
         trailAttr.needsUpdate=true;trailGeo.setDrawRange(0,(path.length-1)*6);
       }
-      prevBall.copy(shuttle.position);prevValid=true;
+      if(pulseGroup.visible){
+        pulseGroup.quaternion.copy(eye.quaternion);
+        pulseGroup.updateMatrixWorld();
+      }
+      if(shuttle.visible){
+        const distance=eye.position.distanceTo(shuttle.position);
+        // The oversized spectator shuttle would fill a first-person serve view.
+        const scale=firstPerson ? .34+.87*T.MathUtils.smoothstep(distance,1,5.8) : 1.21;
+        shuttle.scale.setScalar(scale);
+        glow.scale.set(.56*scale,.56*scale,1);
+        shuttle.updateMatrixWorld();
+        glow.updateMatrixWorld();
+      }
+      renderer.render(scene,eye);
     }
     function render(state, delta){
       const dt=Number.isFinite(delta)?Math.max(.001,Math.min(.06,delta)):.0167;
@@ -616,10 +756,26 @@
       if(hit>lastHit+.08&&state.ball){pulseAge=0;pulseGroup.position.copy(shuttle.position);}
       pulseAge+=dt;pulseGroup.visible=pulseAge<.21;
       if(pulseGroup.visible){
-        pulseGroup.quaternion.copy(camera.quaternion);pulseGroup.scale.setScalar(.52+pulseAge*3.75);pulseMaterial.opacity=Math.max(0,1-pulseAge/.21);
+        pulseGroup.scale.setScalar(.52+pulseAge*3.75);pulseMaterial.opacity=Math.max(0,1-pulseAge/.21);
       }
       lastHit=hit;lastPhase=state.phase;
-      renderer.render(scene,camera);
+      if(state.duel) {
+        for(const v of views) followShuttle(v,state,dt);
+        scene.updateMatrixWorld();
+        renderer.setScissorTest(true);
+        for(const v of views){
+          renderer.setViewport(v.rect);
+          renderer.setScissor(v.rect);
+          drawView(v.eye,true);
+        }
+        renderer.setScissorTest(false);
+        renderer.setViewport(0,0,viewW,viewH);
+        renderer.setScissor(0,0,viewW,viewH);
+      } else {
+        for(const v of views) v.initialized=false;
+        scene.updateMatrixWorld();
+        drawView(camera,false);
+      }
     }
     function dispose(){for(const item of objectsToDispose)item.dispose();sun.shadow.dispose();renderer.dispose();}
     resize();

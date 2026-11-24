@@ -6,33 +6,21 @@
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
-#include "esp_hidd.h"
+#include <string.h>
 #include "nvs_flash.h"
 #include "paddle.h"
+#include "gamepad.h"
 #include "esp_mac.h"
 #include <stdio.h>
 #include "esp_check.h"
 
 static const char *TAG = "tideline_ble";
 static char name[24];
-static esp_hidd_dev_t *hid;
-static atomic_bool authenticated;
-static atomic_bool hid_started;
-static atomic_bool adv_configured;
-static atomic_uint connection_epoch;
 
-// Eight-byte keyboard input report, report ID 1; one-byte LED output.
-static const uint8_t keyboard_map[] = {
-    0x05,0x01, 0x09,0x06, 0xa1,0x01, 0x85,0x01,
-    0x05,0x07, 0x19,0xe0, 0x29,0xe7, 0x15,0x00, 0x25,0x01,
-    0x75,0x01, 0x95,0x08, 0x81,0x02,
-    0x95,0x01, 0x75,0x08, 0x81,0x03,
-    0x95,0x05, 0x75,0x01, 0x05,0x08, 0x19,0x01, 0x29,0x05, 0x91,0x02,
-    0x95,0x01, 0x75,0x03, 0x91,0x03,
-    0x95,0x06, 0x75,0x08, 0x15,0x00, 0x25,0x65,
-    0x05,0x07, 0x19,0x00, 0x29,0x65, 0x81,0x00, 0xc0
-};
-static esp_hid_raw_report_map_t maps[] = {{.data=keyboard_map, .len=sizeof(keyboard_map)}};
+static atomic_bool adv_configured;
+
+static atomic_bool scan_ready;
+
 static esp_ble_adv_params_t advertising = {
     .adv_int_min=0x40, .adv_int_max=0x80, .adv_type=ADV_TYPE_IND,
     .own_addr_type=BLE_ADDR_TYPE_PUBLIC, .channel_map=ADV_CHNL_ALL,
@@ -40,7 +28,7 @@ static esp_ble_adv_params_t advertising = {
 };
 
 static void advertise(void) {
-    if (atomic_load(&hid_started) && atomic_load(&adv_configured)) {
+    if (atomic_load(&adv_configured) && atomic_load(&scan_ready) && gamepad_service_ready()) {
         esp_err_t e = esp_ble_gap_start_advertising(&advertising);
         ESP_LOGI(TAG, "Advertising request: %s", esp_err_to_name(e));
     }
@@ -52,12 +40,13 @@ static void gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *p) {
         atomic_store(&adv_configured, p->adv_data_cmpl.status == ESP_BT_STATUS_SUCCESS);
         advertise();
         break;
+    case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
+        atomic_store(&scan_ready,p->scan_rsp_data_cmpl.status==ESP_BT_STATUS_SUCCESS);
+        advertise(); break;
     case ESP_GAP_BLE_SEC_REQ_EVT:
         esp_ble_gap_security_rsp(p->ble_security.ble_req.bd_addr, true);
         break;
     case ESP_GAP_BLE_AUTH_CMPL_EVT:
-        atomic_store(&authenticated, p->ble_security.auth_cmpl.success);
-        atomic_fetch_add(&connection_epoch, 1);
         ESP_LOGI(TAG, "Authentication %s", p->ble_security.auth_cmpl.success ? "OK" : "FAILED");
         if (!p->ble_security.auth_cmpl.success)
             esp_ble_gap_disconnect(p->ble_security.auth_cmpl.bd_addr);
@@ -66,21 +55,19 @@ static void gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *p) {
     }
 }
 
-static void hid_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
-    (void)arg; (void)base; (void)data;
-    if (id == ESP_HIDD_START_EVENT) {
-        atomic_store(&hid_started, true);
-        advertise();
-    } else if (id == ESP_HIDD_CONNECT_EVENT) {
-        ESP_LOGI(TAG, "BLE link connected; awaiting authentication");
-    } else if (id == ESP_HIDD_DISCONNECT_EVENT) {
-        atomic_store(&authenticated, false);
-        atomic_fetch_add(&connection_epoch, 1);
-        ESP_LOGI(TAG, "Disconnected; no button events retained");
+static void gatts(esp_gatts_cb_event_t event, esp_gatt_if_t iface, esp_ble_gatts_cb_param_t *p) {
+    if (!gamepad_gatts(event, iface, p)) return;
+    if (event == ESP_GATTS_CONNECT_EVT) {
+        esp_ble_set_encryption(p->connect.remote_bda, ESP_BLE_SEC_ENCRYPT_NO_MITM);
+        esp_ble_conn_update_params_t interval = {
+            .min_int = 12, .max_int = 24, .latency = 0, .timeout = 400
+        };
+        memcpy(interval.bda, p->connect.remote_bda, sizeof(interval.bda));
+        esp_ble_gap_update_conn_params(&interval);
+    } else if (event == ESP_GATTS_START_EVT || event == ESP_GATTS_DISCONNECT_EVT) {
         advertise();
     }
 }
-
 esp_err_t paddle_init(char out[24]) {
     uint8_t mac[6];
     if (esp_read_mac(mac, ESP_MAC_BT) != ESP_OK) return ESP_FAIL;
@@ -93,7 +80,7 @@ esp_err_t paddle_init(char out[24]) {
     ESP_RETURN_ON_ERROR(esp_bluedroid_init(), TAG, "Bluetooth setup failed");
     ESP_RETURN_ON_ERROR(esp_bluedroid_enable(), TAG, "Bluetooth setup failed");
     ESP_RETURN_ON_ERROR(esp_ble_gap_register_callback(gap_event), TAG, "Bluetooth setup failed");
-    ESP_RETURN_ON_ERROR(esp_ble_gatts_register_callback(esp_hidd_gatts_event_handler), TAG, "Bluetooth setup failed");
+    ESP_RETURN_ON_ERROR(esp_ble_gatts_register_callback(gatts), TAG, "Bluetooth setup failed");
     esp_ble_auth_req_t auth = ESP_LE_AUTH_REQ_SC_BOND;
     esp_ble_io_cap_t io = ESP_IO_CAP_NONE;
     uint8_t key_size=16, keys=ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
@@ -103,42 +90,14 @@ esp_err_t paddle_init(char out[24]) {
     ESP_RETURN_ON_ERROR(esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &keys, sizeof(keys)), TAG, "Bluetooth setup failed");
     ESP_RETURN_ON_ERROR(esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &keys, sizeof(keys)), TAG, "Bluetooth setup failed");
     ESP_RETURN_ON_ERROR(esp_ble_gap_set_device_name(name), TAG, "Bluetooth setup failed");
-    static uint8_t uuid[] = {0xfb,0x34,0x9b,0x5f,0x80,0x00,0x00,0x80,
-                            0x00,0x10,0x00,0x00,0x12,0x18,0x00,0x00};
     esp_ble_adv_data_t ad = {
-        .include_name=true, .appearance=ESP_HID_APPEARANCE_KEYBOARD,
-        .service_uuid_len=sizeof(uuid), .p_service_uuid=uuid,
+        .appearance=0x03c4, // Bluetooth SIG Gamepad
+        .service_uuid_len=16, .p_service_uuid=(uint8_t *)gamepad_service_uuid,
         .flag=ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT
     };
-    ESP_RETURN_ON_ERROR(esp_ble_gap_config_adv_data(&ad), TAG, "Bluetooth setup failed");
-    esp_hid_device_config_t hc = {
-        .vendor_id=0x303a, .product_id=0x4002, .version=0x0120,
-        .device_name=name, .manufacturer_name="FoloToy prototype",
-        .serial_number=name, .report_maps=maps, .report_maps_len=1
-    };
-    ESP_RETURN_ON_ERROR(esp_hidd_dev_init(&hc, ESP_HID_TRANSPORT_BLE, hid_event, &hid), TAG, "Bluetooth setup failed");
+    esp_ble_adv_data_t scan = {.set_scan_rsp=true,.include_name=true};
+    ESP_RETURN_ON_ERROR(esp_ble_gap_config_adv_data(&ad),TAG,"Advertising setup");
+    ESP_RETURN_ON_ERROR(esp_ble_gap_config_adv_data(&scan),TAG,"Scan response setup");
+    ESP_RETURN_ON_ERROR(esp_ble_gatts_app_register(PAD_GATT_APP),TAG,"Gamepad service setup");
     return ESP_OK;
-}
-bool paddle_connected(void) { return atomic_load(&authenticated); }
-unsigned paddle_epoch(void) { return atomic_load(&connection_epoch); }
-
-static bool key_down;
-static unsigned key_epoch;
-static uint32_t down_at;
-void paddle_release_tick(uint32_t now) {
-    if (!key_down) return;
-    if (!paddle_connected() || key_epoch != paddle_epoch()) { key_down = false; return; }
-    if (now - down_at >= 35) {
-        uint8_t report[8] = {0};
-        if (esp_hidd_dev_input_set(hid, 0, 1, report, sizeof(report)) == ESP_OK) key_down = false;
-    }
-}
-bool paddle_press(uint8_t usage, uint32_t now) {
-    if (key_down || !paddle_connected() || !esp_hidd_dev_connected(hid)) return false;
-    key_epoch = paddle_epoch();
-    uint8_t report[8] = {0, 0, usage};
-    if (esp_hidd_dev_input_set(hid, 0, 1, report, sizeof(report)) != ESP_OK) return false;
-    down_at = now;
-    key_down = true;
-    return true;
 }

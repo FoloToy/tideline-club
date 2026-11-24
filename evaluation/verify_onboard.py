@@ -18,6 +18,8 @@ with tempfile.TemporaryDirectory() as td:
             times=[int(row[0])/1000 for row in rows]
             assert times == expected['events'], (g['id'],times,expected['events'])
             assert len(times)==5 and all(abs(a-b)<=.32 for a,b in zip(times,g['peaks'],strict=True))
-            for _,p1,p2 in rows:
+            for _,p1,p2,speed,aim in rows:
+                assert 95 <= int(speed) <= 2000 and 0 <= int(aim) <= 254
                 assert 'QWERTYFGH'.index(p1)=='UIOJKLBNM'.index(p2)
-            print(f"Group {g['id']}: 5/5, no extra events, times match the previous detector: {times}")
+            speeds = [int(row[3]) for row in rows]
+            print(f"Group {g['id']}: 5/5, no extra events, times match the previous detector: {times}; swing speed {min(speeds)}–{max(speeds)} °/s")
