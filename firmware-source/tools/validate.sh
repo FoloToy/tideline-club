@@ -121,6 +121,13 @@ run_static_checks() {
         -Itests/battery_stubs -Itests/bsp_stubs -Icomponents/bsp/include \
         tests/test_tideline_imu.c -o "${test_dir}/test_tideline_imu"
     "${test_dir}/test_tideline_imu"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/bsp_stubs -Icomponents/bsp/include -Imain \
+        tests/test_capture_mode.c -o "${test_dir}/test_capture_mode"
+    "${test_dir}/test_capture_mode"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Itests/bsp_stubs -Itests/capture_stubs \
+        tests/test_capture_storage.c -lz -o "${test_dir}/test_capture_storage"
+    "${test_dir}/test_capture_storage" "${test_dir}/motionlog.bin"
+    PYTHONDONTWRITEBYTECODE=1 python3 tests/test_capture_export.py "${test_dir}/motionlog.bin"
     for demo in audio low_power ble wifi; do
         "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
             -ffunction-sections -fdata-sections -Itests/demo_stubs -Imain \

@@ -53,3 +53,28 @@ for(let i=0;i<10;i++) send(0,0,0,0,1,2);
 assert.deepEqual(keys,[2]);
 ms+=800;send(0,0,375,1,3,2);assert.equal(strikes.length,2);assert.deepEqual(keys,[2]);
 console.log(JSON.stringify({matches:results.length,maximumRally:Math.max(...results.map(r=>r.best)),minimumNetCrossingM:Math.min(...results.map(r=>r.lowestNet)),motion:"calibration, quiet, strong/weak, direction, repeat suppression, bad packets, gap and key fallback pass"},null,2));
+
+// A recovery rotation can be as fast as a light stroke. One loaded outward
+// phase plus its reverse is one event; resting starts a new opposite stroke.
+{
+  const events = [], buttons = [], states = [];
+  const six = new Motion((power,aim)=>events.push({power,aim}),s=>states.push(s),k=>buttons.push(k));
+  let sample = 0, time = 0, count = 0;
+  function run(n,x,load,z) {
+    for (let i=0;i<n;i++) assert.equal(six.feed([2,sample++,time+=20,1,x,0,0,count,2,load,z]),true);
+  }
+  run(50,0,1000,0);
+  assert.equal(states.at(-1),"体感已就绪");
+  run(6,210,1700,-1400);
+  run(12,50,1000,0);
+  run(8,-160,1550,1300);
+  assert.equal(events.length,1);
+  run(12,0,1000,0);
+  run(7,-120,1450,1100);
+  assert.equal(events.length,2);
+  count++;run(1,0,1000,0);
+  assert.deepEqual(buttons,[2]);assert.equal(events.length,2);
+  assert.equal(six.feed([2,sample,time+20,1,0,0,0,count,2,1000]),false);
+  assert.equal(six.feed([2,sample,time+20,1,0,0,0,count,2,1000,9999]),false);
+  console.log("Six-axis protocol, return suppression, opposite light stroke after rest and button separation PASS");
+}

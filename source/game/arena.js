@@ -609,8 +609,8 @@
       const dt=Number.isFinite(delta)?Math.max(.001,Math.min(.06,delta)):.0167;
       time+=dt;
       resize();waterMat.uniforms.uTime.value=time;
-      animatePerson(player,state.playerX??0,state.playerZ??4.85,state.playerSwing,time,dt,state.ready);
-      animatePerson(opponent,state.aiX??0,state.aiZ??-4.85,state.aiSwing,time+.65,dt,false);
+      animatePerson(player,state.playerX??0,state.playerZ??4.85,state.playerSwing,time,dt,state.ready && (state.phase==="serve" ? state.server===0 : state.flight?.side===1));
+      animatePerson(opponent,state.aiX??0,state.aiZ??-4.85,state.aiSwing,time+.65,dt,state.duel && state.ready && (state.phase==="serve" ? state.server===1 : state.flight?.side===0));
       updateShuttle(state,dt,time);
       const hit=Number(state.hit)||0;
       if(hit>lastHit+.08&&state.ball){pulseAge=0;pulseGroup.position.copy(shuttle.position);}

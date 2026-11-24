@@ -9,9 +9,10 @@
   }
   let level = "shore", match, arena, active = false, paused = false, sound = true;
   let raf = 0, previous = 0, accumulator = 0, toast = "", toastUntil = 0;
-  let audio, socket, reconnectTimer = 0, lastPacket = 0;
-  let link = "键盘 / 触屏", deviceUsed = false, lastSpeed = 0, strokes = 0, packetCount = 0, measuredHz = 0;
-  const board = document.documentElement.dataset.controller === "on";
+  let audio, duel = false;
+  const players = [0,1].map(() => ({seen:false, swings:0, buttons:0}));
+  const shotKeys = ["QWERTYFGH","UIOJKLBNM"];
+  function playerName(side) { return duel ? (side ? "P2" : "P1") : (side ? "电脑" : "你"); }
   const labels = {shore:"入门",tide:"进阶",swell:"挑战"};
   function ring(kind) {
     if (!sound || !audio || audio.state !== "running") return;
@@ -35,57 +36,53 @@
     if (!sheet.open) sheet.showModal();
   }
   function say(text, seconds = .68) { toast = text; toastUntil = (match?.clock || 0) + seconds; }
-  function setLink(text) {
-    link = text;
-    $("input-status").textContent = text;
-    document.body.classList.toggle("connected", text.includes("已连接") || text.includes("就绪"));
-    const readout = $("connection-detail");
-    if (readout) readout.textContent = text;
+  function stroke(power, aim, side=0) {
+    if (active && !paused) match.swing(power,aim,side);
   }
-  function stroke(power, aim, hardware = false) {
-    if (hardware) { strokes++; if ($("stroke-count")) $("stroke-count").textContent = strokes; }
-    if (active && !paused) match.swing(power,aim);
+  function refreshInputs() {
+    const seen = [];
+    players.forEach((p,side) => {
+      const name = "P"+(side+1);
+      if (p.seen) seen.push(name);
+      if ($("paddle-"+side)) updateText("paddle-"+side,name+" · "+(p.seen ?
+        "已收到输入　挥拍 "+p.swings+" 次　按键 "+p.buttons+" 次" : "等待输入"));
+    });
+    updateText("input-status",seen.length ? seen.join(" / ")+" 已收到输入" : "短按手柄确认键");
+    document.body.classList.toggle("connected",seen.length > 0);
   }
-  const motion = new TidelineMotion((power,aim) => stroke(power,aim,true),setLink,
-    key => stroke(key === 2 ? .72 : .56, key === 0 ? -.95 : key === 1 ? .95 : 0, true));
-  function connect() {
-    if (!board || socket || document.hidden) return;
-    motion.reset(); deviceUsed = false; lastPacket = performance.now();
-    setLink("正在连接手柄");
-    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/motion");
-    socket = ws;
-    ws.onmessage = e => {
-      if (socket !== ws) return;
-      try {
-        const packet = JSON.parse(e.data);
-        if (!motion.feed(packet)) return;
-        deviceUsed = true; lastPacket = performance.now(); packetCount++;
-        lastSpeed = Math.round(Math.hypot(...packet.slice(4,7)));
-      } catch {}
-    };
-    ws.onerror = () => ws.close();
-    ws.onclose = () => {
-      if (socket !== ws) return;
-      socket = null; deviceUsed = false; motion.reset();
-      setLink("手柄断线 · 正在重连");
-      if (active && !paused && match.phase !== "over") pause("手柄连接中断");
-      clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 900);
-    };
-  }
-  setInterval(() => {
-    measuredHz = packetCount; packetCount = 0;
-    if (board && socket && performance.now() - lastPacket > 2200) socket.close();
-    if ($("telemetry")) $("telemetry").textContent = measuredHz + " 帧/秒　·　" + lastSpeed + " °/秒";
-  },1000);
-  function showInfo(id) {
-    modal($(id).innerHTML);
-    if (id === "connect" && board) {
-      content.innerHTML = '<h2>手柄检测</h2><p id="connection-detail"></p><p id="telemetry"></p><p>已识别挥拍或按键 <b id="stroke-count">0</b> 次</p><p>屏幕朝自己，试着轻挥一次。若提示按键模式，可用上、下键打左右路，确认键打中路。</p><div class="dialog-actions"><button id="calibrate">重新校准</button></div>';
-      $("connection-detail").textContent = link; $("stroke-count").textContent = strokes;
-      $("telemetry").textContent = measuredHz + " 帧/秒　·　" + lastSpeed + " °/秒";
-      $("calibrate").onclick = () => { motion.reset(); setLink("请平放手柄 1 秒"); };
+  function handlePaddle(e) {
+    const fallback = !e.code || e.code==="Unidentified";
+    const letter = fallback ? /^[a-z]$/i.exec(e.key)?.[0].toUpperCase() : /^Key([A-Z])$/.exec(e.code)?.[1];
+    const digit = fallback ? /^[1-8]$/.exec(e.key)?.[0] : /^Digit([1-8])$/.exec(e.code)?.[1];
+    // The first report can arrive in the lobby, before the tester or a match opens.
+    if (sheet.open && !content.querySelector("#paddle-0")) return false;
+    for (let side=0; side<2; side++) {
+      const key = letter ? shotKeys[side].indexOf(letter) : -1;
+      const button = Number(digit)-1-side*3;
+      const isButton = digit && button>=0 && button<3;
+      const hello = Number(digit)===7+side;
+      if (key<0 && !isButton && !hello) continue;
+      e.preventDefault();
+      if (e.repeat) return true;
+      const p=players[side]; p.seen=true;
+      if (key>=0) {
+        p.swings++;
+        stroke([.28,.56,.92][Math.floor(key/3)],key%3-1,side);
+      } else if (isButton) {
+        p.buttons++;
+        stroke(button===2?.72:.56,[-.95,.95,0][button],side);
+      }
+      refreshInputs(); return true;
     }
+    return false;
   }
+  function showInfo(id) { modal($(id).innerHTML); refreshInputs(); }
+  document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
+    duel = b.dataset.mode==="duel";
+    document.querySelectorAll("[data-mode]").forEach(o => o.setAttribute("aria-pressed",String(o===b)));
+    $("difficulty").hidden = duel;
+    updateText("mode-name",duel?"双人对战":"人机对战");
+  });
   document.querySelectorAll("[data-dialog]").forEach(b => b.onclick = () => showInfo(b.dataset.dialog));
   document.querySelectorAll("[data-level]").forEach(b => b.onclick = () => {
     level = b.dataset.level;
@@ -108,7 +105,8 @@
   function start() {
     if (sheet.open) closeSheet();
     enableAudio(); keys.clear();
-    match = new TidelineMatch(level); active = true; paused = false; toast = ""; toastUntil = 0;
+    match = new TidelineMatch(duel ? "shore" : level, Math.random, duel);
+    updateText("near-label",playerName(0)); updateText("far-label",playerName(1)); active = true; paused = false; toast = ""; toastUntil = 0;
     $("lobby").hidden = true; $("court").hidden = false;
     try {
       if (!arena) arena = createArena($("world"));
@@ -123,7 +121,7 @@
   }
   function pause(title="比赛暂停") {
     if (!active || paused || match.phase === "over") return;
-    paused = true; keys.clear(); cancelAnimationFrame(raf);
+    paused = true; match.buffer = null; keys.clear(); cancelAnimationFrame(raf);
     modal('<h2>'+title+'</h2><p>比分与来球位置已保留。</p><div class="dialog-actions"><button id="resume">继续比赛</button><button id="restart">重新开局</button><button id="back">返回专区</button></div>');
     $("resume").onclick=resume; $("restart").onclick=start; $("back").onclick=lobby;
   }
@@ -134,19 +132,20 @@
   }
   function finish() {
     const won = match.score[0] === 7;
-    modal('<h2>'+(won?"你赢下了海岸单打":"电脑赢下了本场")+'</h2><div class="result-score">'+match.score[0]+' <span>∶</span> '+match.score[1]+'</div><p>'+labels[level]+'对手 · 最长回合 '+match.best+' 拍 · 成功接球 '+match.hits+' 次</p><div class="dialog-actions"><button id="again">再来一局</button><button id="exit">返回专区</button></div>');
+    modal('<h2>'+(playerName(won?0:1)+"赢下了本场")+'</h2><div class="result-score">'+match.score[0]+' <span>∶</span> '+match.score[1]+'</div><p>'+(duel?'双人对战':labels[level]+'对手')+' · 最长回合 '+match.best+' 拍 · 成功接球 '+match.hits+' 次</p><div class="dialog-actions"><button id="again">再来一局</button><button id="exit">返回专区</button></div>');
     $("again").onclick=start; $("exit").onclick=lobby;
   }
   function hud() {
     updateText("you",match.score[0]); updateText("cpu",match.score[1]);
-    updateText("rally",match.rally ? "本回合  "+match.rally+" 拍" : labels[level]+" · 先到 7 分");
+    updateText("rally",match.rally ? "本回合  "+match.rally+" 拍" : (duel?"双人对战":labels[level])+" · 先到 7 分");
     let cue="准备接球", tip="人物会自动移动到来球附近";
     if (match.phase==="serve") {
-      cue=match.server ? "电脑发球" : "轮到你发球";
-      tip=match.server ? "留意对面的发球方向" : deviceUsed ? "轻挥手柄，或按确认键" : "按空格，或点「挥拍」";
+      cue=playerName(match.server)+"发球";
+      tip=duel ? (match.server?"远场":"近场")+"轻挥手柄发球" : match.server ? "留意对面的发球方向" : "挥动手柄、按空格或点「挥拍」";
     } else if (match.phase==="point" || match.phase==="over") {
-      cue=match.server ? "电脑得分" : "你得分了"; tip="得分方发下一球";
-    } else if (match.ready) { cue="现在挥拍"; tip="瞄准对方空当"; }
+      cue=playerName(match.server)+"得分"; tip="得分方发下一球";
+    } else if (match.ready) { cue=(duel ? playerName(1-match.flight.side)+" · " : "")+"现在挥拍"; tip="瞄准对方空当"; }
+    else if (duel) { cue=playerName(1-match.flight.side)+" 准备接球"; tip=match.flight.side ? "来球飞向近场" : "来球飞向远场"; }
     else if (match.flight?.side===0) { cue="对手接球中"; tip="准备下一拍"; }
     updateText("cue",cue); updateText("tip",tip);
     updateText("signal-label",match.clock<toastUntil ? toast : match.ready && match.phase==="flight" ? "现在挥拍" : "");
@@ -157,9 +156,10 @@
     accumulator+=dt;
     while (accumulator>=1/120) { match.step(1/120); accumulator-=1/120; }
     for (const e of match.events.splice(0)) {
-      if (e.type==="stroke") { ring(e.detail); if (match.flight?.side===0) say(e.detail); }
+      if (e.type==="stroke") { ring(e.detail); if (duel || match.flight?.side===0) say(e.detail); }
+      if (e.type==="buffer") say(e.detail,.24);
       if (e.type==="miss") say(e.detail,.45);
-      if (e.type==="point" || e.type==="over") { ring("point"); say(e.detail?"电脑得分":"你得分了",1.2); }
+      if (e.type==="point" || e.type==="over") { ring("point"); say(playerName(e.detail)+"得分",1.2); }
     }
     arena.render(match,dt); hud();
     if (match.phase==="over") finish(); else raf=requestAnimationFrame(frame);
@@ -170,6 +170,10 @@
     b.onclick=() => stroke(b.dataset.shot==="hit"?.76:.58, b.dataset.shot==="left"?-1:b.dataset.shot==="right"?1:0);
   });
   window.addEventListener("keydown", e => {
+    if (e.ctrlKey || e.metaKey || e.altKey || document.hidden ||
+        e.target?.isContentEditable || e.target?.closest?.("input, textarea, select")) return;
+    if (e.isComposing && (!e.code || e.code==="Unidentified")) return;
+    if (handlePaddle(e)) return;
     if (!active || sheet.open) return;
     keys.add(e.code);
     if (e.code==="Escape" || e.code==="KeyP") { e.preventDefault(); pause(); return; }
@@ -183,7 +187,6 @@
   window.addEventListener("resize",()=>{if(active && arena) arena.resize();});
   document.addEventListener("visibilitychange",()=> {
     if(document.hidden) { keys.clear(); if(active && !paused) pause(); }
-    else if (board && !socket) connect();
   });
-  if(board) { document.querySelector(".input-btn u").textContent="手柄检测"; connect(); }
+
 })();

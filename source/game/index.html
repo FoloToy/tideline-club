@@ -9,24 +9,25 @@
 <article class="poster">
 <img class="keyart" src="assets/keyart.webp" alt="夕阳下的海岸羽毛球场，一枚白羽球带着珊瑚色轨迹飞越球网">
 <div class="poster-shade"></div>
-<div class="hero-copy"><span class="venue"><i></i> 海岸球场 · 单人对战</span><h2>潮汐羽球</h2><div class="club">TIDELINE<br>CLUB<span>.</span></div><p>轻挥手柄，或用空格键击球。</p><button class="play" id="play"><span class="triangle"></span>开始比赛</button></div>
+<div class="hero-copy"><span class="venue"><i></i> 海岸球场 · <span id="mode-name">人机对战</span></span><h2>潮汐羽球</h2><div class="club">TIDELINE<br>CLUB<span>.</span></div><p>轻挥手柄，或用空格键击球。</p><button class="play" id="play"><span class="triangle"></span>开始比赛</button></div>
 <div class="court-stamp" aria-hidden="true"><i></i><b></b></div>
 </article>
 <section class="settings" aria-label="比赛设置">
-<div class="setting"><span class="label">比赛对手 <em>/ OPPONENT</em></span><div class="choices" aria-label="选择难度"><button data-level="shore" aria-pressed="true">入门</button><button data-level="tide" aria-pressed="false">进阶</button><button data-level="swell" aria-pressed="false">挑战</button></div></div>
-<div class="setting"><span class="label">控制器 <em>/ INPUT</em></span><button class="input-btn" data-dialog="connect"><span class="dot"></span><span id="input-status">键盘 / 触屏</span><u>连接手柄</u></button></div>
+<div class="setting"><span class="label">对战模式 <em>/ MATCH</em></span><div class="choices" aria-label="选择对战模式"><button data-mode="solo" aria-pressed="true">人机</button><button data-mode="duel" aria-pressed="false">双人</button></div><div id="difficulty" class="choices" aria-label="选择难度"><button data-level="shore" aria-pressed="true">入门</button><button data-level="tide" aria-pressed="false">进阶</button><button data-level="swell" aria-pressed="false">挑战</button></div></div>
+<div class="setting"><span class="label">控制器 <em>/ INPUT</em></span><button class="input-btn" data-dialog="connect"><span class="dot"></span><span id="input-status" aria-live="polite">短按手柄确认键</span><u>手柄检测</u></button></div>
 <div class="setting rule"><span class="label">赛制 <em>/ FORMAT</em></span><strong>7 <small>分制</small></strong><span>先得七分获胜</span></div>
 </section><footer><span>FOLOTOY AI PASSPORT</span><span>羽毛球 · 单打</span></footer></div></main>
 <section id="court" hidden aria-label="羽毛球比赛">
 <canvas id="world" aria-label="海岸 3D 羽毛球场"></canvas>
-<header class="hud"><button id="pause" aria-label="暂停比赛">Ⅱ</button><div class="score"><span>你 <b id="you">0</b></span><i></i><span><b id="cpu">0</b> 电脑</span></div><button id="sound" aria-pressed="true">音效 开</button></header>
+<header class="hud"><button id="pause" aria-label="暂停比赛">Ⅱ</button><div class="score"><span><span id="near-label">你</span> <b id="you">0</b></span><i></i><span><b id="cpu">0</b> <span id="far-label">电脑</span></span></div><button id="sound" aria-pressed="true">音效 开</button></header>
 <div class="rally"><span>TIDELINE CLUB</span><b id="rally">海岸单打</b></div>
 <div class="signal" id="signal"><span id="signal-label"></span></div>
 <div class="prompt"><strong id="cue">准备发球</strong><span id="tip"></span></div>
 <div class="touch"><button data-shot="left">左路</button><button data-shot="hit">挥拍</button><button data-shot="right">右路</button></div>
 </section>
 <dialog id="sheet"><div class="sheet-head"><span>TIDELINE CLUB</span><button id="close" aria-label="关闭">×</button></div><div id="sheet-content"></div></dialog>
-<template id="guide"><h2>第一次上场</h2><ol><li><b>发球</b><p>选好难度后开始比赛。轻挥一次手柄，或按空格、点「挥拍」发球。得分方发下一球。</p></li><li><b>接球</b><p>人物自动跑位。看球落向近场，在「现在挥拍」亮起时出手。早挥会落空。</p></li><li><b>打向空当</b><p>屏幕朝自己，向左或右挥拍选择落点。小幅动作吊球，更快的挥拍可以在高点击出扣杀。</p><p>键盘：← / → 或 A / D 瞄准，空格击球，Shift + 空格重击，↓ + 空格轻吊。触屏：左路、右路打边线，中间按钮打中路。</p></li></ol></template>
-<template id="connect"><h2>连接 AI Passport</h2><ol><li><b>打开手柄</b><p>刷入套件内的 Tideline 固件，开机后查看屏幕上的 Wi-Fi 名称与 KEY。</p></li><li><b>加入手柄 Wi-Fi</b><p>电脑或 iPad 连上 Tideline- 开头的热点。若系统提示无互联网，选择保持连接。</p></li><li><b>打开手柄上的球场</b><p>在浏览器打开下方地址，将手柄平放约一秒。看到「体感已就绪」即可开始。开机时会生成新的热点密码。</p></li></ol><a class="action-link" href="http://192.168.4.1/">打开 192.168.4.1</a></template>
-<script src="assets/three.min.js"></script><script src="arena.js"></script><script src="match.js"></script><script src="motion.js"></script><script src="app.js"></script>
+<template id="guide"><h2>第一次上场</h2><ol><li><b>发球</b><p>选好对战模式后开始比赛。轻挥一次手柄，或按空格、点「挥拍」发球。得分方发下一球。</p></li><li><b>接球</b><p>人物自动跑位。看球落向自己这侧，在「现在挥拍」亮起时出手。球快到身边时就可以挥拍，稍早出手会在够到球时接回。双人模式下，P1 守近场，P2 守远场。</p></li><li><b>打向空当</b><p>屏幕朝自己，向左或右挥拍选择落点。小幅动作吊球，更快的挥拍可以在高点击出扣杀。</p><p>键盘：← / → 或 A / D 瞄准，空格击球，Shift + 空格重击，↓ + 空格轻吊。触屏：左路、右路打边线，中间按钮打中路。</p></li></ol></template>
+<template id="connect"><h2>蓝牙手柄检测</h2><ol><li><b>在电脑或 iPad 上配对</b><p>打开系统的蓝牙设置，连接手柄屏幕上显示的 Tideline 名称。两只手柄分别配对到运行游戏的同一台设备，Wi-Fi 可以照常使用。</p></li><li><b>给手柄选边</b><p>先点一下球场页面，再短按手柄确认键。下面会显示收到输入的玩家；只玩一人时默认是 P1。第二只手柄按下键选 P2，再按确认启用。手柄静放一秒后挥拍，看对应玩家的计数。长按下键可停用并重新选边。</p></li></ol>
+<p id="paddle-0"></p><p id="paddle-1"></p><p>电视可通过投屏或 HDMI 显示比赛。想比较电视的延迟，可以先看游戏设备本身的画面试接几球。</p></template>
+<script src="assets/three.min.js"></script><script src="arena.js"></script><script src="match.js"></script><script src="app.js"></script>
 </body></html>

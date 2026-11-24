@@ -54,8 +54,10 @@ int main(void) {
         tear=true;assert(bsp_qmi8658a_read(&s)==ESP_ERR_NOT_FINISHED);tear=false;
         assert(bsp_qmi8658a_read(&s)==ESP_OK);
         assert(s.gyro_dps[0]==100 && s.gyro_dps[1]==-125 && s.gyro_dps[2]==350);
-        char frame[96];int n=format_frame(frame,sizeof(frame),48,960,1,(int)s.gyro_dps[1],(int)s.gyro_dps[0],-(int)s.gyro_dps[2],2,1);
+        char frame[96];int n=format_frame(frame,sizeof(frame),48,960,1,(int)s.gyro_dps[1],(int)s.gyro_dps[0],-(int)s.gyro_dps[2],2,1,false,1000,0);
         assert(n>0 && strcmp(frame,"[1,48,960,1,-125,100,-350,2,1]")==0);
+        n=format_frame(frame,sizeof(frame),48,960,1,-125,100,-350,2,1,true,1420,-670);
+        assert(n>0 && strcmp(frame,"[2,48,960,1,-125,100,-350,2,1,1420,-670]")==0);
         regs[0x30]++;raw(0x3b,-32768);raw(0x3d,-32768);raw(0x3f,-32768);
         assert(bsp_qmi8658a_read(&s)==ESP_ERR_NOT_FINISHED);
         assert(qmi_remove_device()==ESP_OK);

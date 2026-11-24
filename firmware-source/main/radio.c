@@ -20,6 +20,7 @@ static portMUX_TYPE state_lock = portMUX_INITIALIZER_UNLOCKED;
 static controller_frame_t latest;
 static int subscriber = -1;
 static bool queued;
+static bool subscriber_six_axis;
 
 static esp_err_t index_page(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
@@ -33,8 +34,12 @@ static esp_err_t socket_event(httpd_req_t *req) {
         int fd = httpd_req_to_sockfd(req);
         int immediate = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &immediate, sizeof(immediate));
+        char query[24], version[4];
+        bool six_axis = httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK &&
+                        httpd_query_key_value(query, "v", version, sizeof(version)) == ESP_OK &&
+                        strcmp(version, "2") == 0;
         portENTER_CRITICAL(&state_lock);
-        subscriber = fd;
+        subscriber = fd; subscriber_six_axis = six_axis;
         portEXIT_CRITICAL(&state_lock);
         return ESP_OK;
     }
@@ -45,12 +50,12 @@ static esp_err_t socket_event(httpd_req_t *req) {
 static void send_latest(void *unused) {
     controller_frame_t f;
     portENTER_CRITICAL(&state_lock);
-    int fd = subscriber; f = latest;
+    int fd = subscriber; f = latest; bool six_axis = subscriber_six_axis;
     portEXIT_CRITICAL(&state_lock);
     bool ok = false;
     if (fd >= 0 && httpd_ws_get_fd_info(server, fd) == HTTPD_WS_CLIENT_WEBSOCKET) {
         char payload[100];
-        int n = format_frame(payload, sizeof(payload), f.seq, f.ms, f.imu, f.gx, f.gy, f.gz, f.buttons, f.key);
+        int n = format_frame(payload, sizeof(payload), f.seq, f.ms, f.imu, f.gx, f.gy, f.gz, f.buttons, f.key, six_axis, f.acceleration_mg, f.accel_z_mg);
         httpd_ws_frame_t packet = {.type=HTTPD_WS_TYPE_TEXT, .payload=(uint8_t *)payload, .len=(size_t)n};
         ok = httpd_ws_send_frame_async(server, fd, &packet) == ESP_OK;
         if (!ok) httpd_sess_trigger_close(server, fd);

@@ -9,21 +9,24 @@
     swell: { aiSpeed: 4.65, reaction: .15, window: .17, pace: 1.05 }
   };
   class Match {
-    constructor(level = "shore", random = Math.random) {
+    constructor(level = "shore", random = Math.random, duel = false) {
       this.rules = rules[level] || rules.shore;
       this.random = random;
+      this.duel = duel;
+      this.buffer = null;
       this.score = [0, 0];
       this.rally = this.best = this.clock = this.hits = 0;
       this.playerX = -.85; this.playerZ = 4.65;
       this.aiX = .85; this.aiZ = -4.65;
       this.ball = {x: this.playerX + .28, y: 1.2, z: this.playerZ - .45};
       this.playerSwing = this.aiSwing = this.hit = 0;
-      this.cooldown = 0; this.message = ""; this.server = 0;
+      this.message = ""; this.server = 0;
       this.phase = "serve"; this.ready = true; this.wait = 0;
       this.events = [];
     }
     emit(type, detail) { this.events.push({type, detail}); }
     point(winner) {
+      this.buffer = null;
       this.score[winner]++;
       this.server = winner;
       this.best = Math.max(this.best, this.rally);
@@ -33,6 +36,7 @@
       this.emit(this.phase, winner);
     }
     launch(side, x, z, duration, lift, style) {
+      this.buffer = null;
       this.flight = {side, start: {...this.ball}, x, z, duration, lift, t: 0, style};
       this.phase = "flight"; this.ready = false;
       this.hit = 1;
@@ -41,25 +45,40 @@
       else this.aiSwing = 1;
       this.emit("stroke", style);
     }
-    swing(power = .55, aim = 0) {
-      if (this.cooldown > 0 || this.phase === "point" || this.phase === "over") return false;
-      power = clamp(power, 0, 1); aim = clamp(aim, -1, 1);
+    swing(power = .55, aim = 0, side = 0) {
+      if (side !== 0 && !(this.duel && side === 1)) return false;
+      if (this.phase === "point" || this.phase === "over") return false;
+      const facing = side === 0 ? 1 : -1;
       if (this.phase === "serve") {
-        if (this.server !== 0) return false;
-        this.cooldown = .20;
-        this.launch(0, -Math.sign(this.playerX || 1) * 1.35, -4.4, 1.24, 2.25, "发球");
+        if (this.server !== side) return false;
+        const origin = side === 0 ? this.playerX : this.aiX;
+        this.launch(side, -Math.sign(origin || facing)*1.35, -facing*4.4, 1.24, 2.25, "发球");
         return true;
       }
-      if (this.flight.side !== 1) return false;
-      this.playerSwing = 1;
-      this.cooldown = .20;
-      if (!this.ready) { this.emit("miss", this.ball.z < this.playerZ - 1 ? "早了一点" : "晚了一点"); return false; }
-      const accuracy = clamp(1 - Math.abs(this.flight.t - .80) / (this.rules.window + .01), 0, 1);
+      if (this.flight.side === side) return false;
+      power = clamp(power, 0, 1); aim = clamp(aim, -1, 1);
+      if (this.ready) return this.returnShot(side, power, aim);
+      const f = this.flight;
+      if (f.contact) {
+        // Recognize the physical stroke shortly after the last reachable frame.
+        if (this.clock - f.contact.clock <= .10) {
+          this.ball = {...f.contact.ball};
+          return this.returnShot(side, power, aim, f.contact.t);
+        }
+        this.emit("miss","晚了一点"); return false;
+      }
+      this.buffer = {side, power, aim, until:this.clock + .26};
+      this.emit("buffer","收到挥拍");
+      return false;
+    }
+    returnShot(side, power, aim, contactTime = this.flight.t) {
+      const facing = side === 0 ? 1 : -1;
+      const accuracy = clamp(1 - Math.abs(contactTime - .80) / (this.rules.window + .01), 0, 1);
       const smash = power >= .69 && this.ball.y >= 1.72 && accuracy > .32;
       const drop = power < .37;
-      const x = clamp(aim * 2.53 + (this.random() - .5) * (.8 - .55 * accuracy), -2.55, 2.55);
+      const x = clamp(facing*aim * 2.53 + (this.random() - .5) * (.8 - .55 * accuracy), -2.55, 2.55);
       this.hits++;
-      this.launch(0, x, drop ? -2.2 : -5.75, smash ? .67 : drop ? .98 : 1.24,
+      this.launch(side, x, facing*(drop ? -2.2 : -5.75), smash ? .67 : drop ? .98 : 1.24,
         smash ? .62 : drop ? 1.38 : 2.05, smash ? "扣杀" : drop ? "吊球" : "高远球");
       return true;
     }
@@ -70,7 +89,7 @@
         1.65 + this.random() * .95, this.rally ? "回球" : "发球");
     }
     step(dt) {
-      this.clock += dt; this.cooldown = Math.max(0, this.cooldown - dt);
+      this.clock += dt;
       this.playerSwing = Math.max(0, this.playerSwing - dt * 3.8);
       this.aiSwing = Math.max(0, this.aiSwing - dt * 3.8);
       this.hit = Math.max(0, this.hit - dt * 5);
@@ -79,7 +98,7 @@
         this.wait -= dt;
         if (this.wait <= 0) {
           this.phase = "serve"; this.rally = 0; this.wait = .95;
-          this.ready = this.server === 0; this.emit("serve", this.server);
+          this.ready = this.duel || this.server === 0; this.emit("serve", this.server);
         }
         return;
       }
@@ -91,7 +110,7 @@
         this.aiZ = approach(this.aiZ, -4.65, dt * 5);
         this.ball = this.server === 0 ? {x:this.playerX+.28,y:1.20,z:this.playerZ-.45}
           : {x:this.aiX-.28,y:1.20,z:this.aiZ+.45};
-        if (this.server === 1 && (this.wait -= dt) <= 0) this.aiReturn();
+        if (!this.duel && this.server === 1 && (this.wait -= dt) <= 0) this.aiReturn();
         return;
       }
       const f = this.flight;
@@ -101,13 +120,24 @@
       this.ball.x = f.start.x + (f.x - f.start.x) * travel;
       this.ball.z = f.start.z + (f.z - f.start.z) * travel;
       this.ball.y = f.start.y * (1 - f.t) + .07 * f.t + 4 * f.lift * f.t * (1 - f.t);
-      if (f.side === 1) {
-        const standX = f.x - .36, standZ = f.z + .34;
-        this.playerX = approach(this.playerX, standX, dt * 6.8);
-        this.playerZ = approach(this.playerZ, standZ, dt * 5.5);
-        this.aiX = approach(this.aiX, this.aiX * .96, dt * 1.65);
-        this.ready = f.t >= .80 - this.rules.window && f.t <= .80 + this.rules.window &&
-          Math.hypot(this.ball.x - this.playerX, this.ball.z - this.playerZ) < 2.15 && this.ball.y > .3;
+      if (this.duel || f.side === 1) {
+        const near = f.side === 1, facing = near ? 1 : -1;
+        const rx = near ? "playerX" : "aiX", rz = near ? "playerZ" : "aiZ", other = near ? "aiX" : "playerX";
+        this[rx] = approach(this[rx], f.x-facing*.36, dt*6.8);
+        this[rz] = approach(this[rz], f.z+facing*.34, dt*5.5);
+        this[other] = approach(this[other], this[other]*.96, dt*1.65);
+        this.ready = f.t >= .80-this.rules.window && f.t <= .80+this.rules.window &&
+          Math.hypot(this.ball.x-this[rx], this.ball.z-this[rz]) < 2.15 && this.ball.y > .3;
+        if (this.ready) f.contact = {clock:this.clock, t:f.t, ball:{...this.ball}};
+        if (this.buffer && this.buffer.until < this.clock) {
+          this.buffer=null;
+          this.emit("miss","早了一点");
+        }
+        if (this.ready && this.buffer) {
+          const {side,power,aim}=this.buffer;
+          this.returnShot(side,power,aim);
+          return;
+        }
       } else {
         this.playerX = approach(this.playerX, 0, dt * 1.5);
         if (f.t * f.duration >= this.rules.reaction) {
@@ -119,7 +149,7 @@
           this.aiReturn(); return;
         }
       }
-      if (f.t >= 1) this.point(f.side);
+      if (f.t >= 1 && (!f.contact || this.clock - f.contact.clock > .10)) this.point(f.side);
     }
   }
   root.TidelineMatch = Match;
